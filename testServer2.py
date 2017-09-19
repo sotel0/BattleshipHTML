@@ -1,41 +1,59 @@
 #!/usr/bin/python3
 
 from http.server import BaseHTTPRequestHandler, HTTPServer
-import sys
-import re
+import sys    # using arguments
+import re     # string management
 import socket # just used to get local ip
-
+import fileinput #to get the board file
 
 # C - 5, B - 4, R - 3, S - 3, D - 2
 # used to keep track of which ships have been sunk
 shipList = [5, 4, 3, 3, 2]
-
+firstTime = True
+boardfile = ""
 
 # Create custom HTTPRequestHandler class
 class HTTPHandler(BaseHTTPRequestHandler):
 
-    # define update request
+    # define request to return html file
     def do_GET(self):
         try:
 
-            print("####@#@#@#@")
-            print (self.rfile.read(7))
+            if self.path == '/opponent_board.html':
+                with open('opponent_board.html') as fh:
+                    self.send_response(200)
+                    self.send_header('Content-type', 'text/html')
+                    self.end_headers()
+                    self.wfile.write(fh.read().encode())
 
-            fileB = open("own_board.html")
-            self.response(200)
-            self.send_header('Content-type', 'file')
-            self.end_headers()
-            self.wfile.write(fileB)
+            if self.path == '/own_board.html':
+                with open('own_board.html') as fh:
+                    self.send_response(200)
+                    self.send_header('Content-type', 'text/html')
+                    self.end_headers()
+                    self.wfile.write(fh.read().encode())
             return
         except IOError:
             self.send_error(404, 'file not found')
 
     # define post/fire request
     def do_POST(self):
-        infile = open('Board.txt', 'r')
+        global firstTime
+
+        # create copy of board.txt if first load up
+        if firstTime:
+            firstTime = False
+
+            # copy board.txt into tempBoard.txt
+            with open(boardfile) as f:
+                with open("tempBoard.txt", "w") as f1:
+                    for line in f:
+                        f1.write(line)
+
+        # use tempBoard when editing directly
+        infile = open("tempBoard.txt", "r")
+
         ownBoard = readInBoard(infile)
-        infile2 = open('enemyBoard.txt', 'r')
-        guessBoard = readInBoard(infile2)
 
         try:
             # declare response as global
@@ -55,9 +73,10 @@ class HTTPHandler(BaseHTTPRequestHandler):
                 col = int(x[4])
                 row = int(x[8])
 
+                # create response to be sent
                 urlResponse = ""
 
-                response, sunk, guessBoard = makeGuess(ownBoard, guessBoard, row, col)
+                response, sunk = makeGuess(ownBoard, row, col)
                 if response == 1 or response == 0:
                     if response == 1:
                         urlResponse = "hit=1"
@@ -67,14 +86,12 @@ class HTTPHandler(BaseHTTPRequestHandler):
                     if sunk == 0:
                         pass
                     else:
-                        letter = getLetter(sunk)
-                        urlResponse = urlResponse + "&sink=" + letter
+                        urlResponse = urlResponse + "&sink=" + sunk
                     response = 200
 
                 # send file content to client
 
             # write the response back
-            print(response)
             self.send_response(response)
 
             self.send_header('Content-type', 'text')
@@ -87,6 +104,31 @@ class HTTPHandler(BaseHTTPRequestHandler):
         except IOError:
             self.send_error(404, 'file not found')
 
+def main():
+    global boardfile
+    boardfile = sys.argv[2]
+
+    print('starting server...')
+
+    # gets port from arguments
+    port_number = int(sys.argv[1])
+    print(("Server Port: " + str(port_number)))
+
+    # gets own IP number, can change to desired IP
+
+    # uncomment/comment local host to use / not use
+    IP = socket.gethostbyname(socket.gethostname())
+    #IP = "127.0.0.1"
+
+    print("Server IP: " + IP)
+    server_address = (IP, port_number)
+
+
+    # establish httpd server
+    httpd = HTTPServer(server_address, HTTPHandler)
+    print('http server is running...')
+    httpd.serve_forever()
+
 
 def checkFormat(spot):
     if len(spot) != 10:
@@ -95,12 +137,16 @@ def checkFormat(spot):
         return False
     if spot[4] == "1" or spot[4] == "2" or spot[4] == "3" or spot[4] == "4" or spot[4] == "5" or spot[4] == "6" or spot[4] == "7" or spot[4] == "8" or spot[4] == "9":
         pass
+    else:
+        return False
     if spot[8] == "1" or spot[8] == "2" or spot[8] == "3" or spot[8] == "4" or spot[8] == "5" or spot[8] == "6" or spot[8] == "7" or spot[8] == "8" or spot[8] == "9":
         pass
+    else:
+        return False
     return True
 
 
-
+# turn the file into a string
 def readInBoard(infile):
     boardStr = ''
     # Loop through each line of the file
@@ -110,59 +156,45 @@ def readInBoard(infile):
     return boardStr
 
 
-def main():
+# update the tempBoard
+def overwriteFile(board):
+    file = open("tempBoard.txt", "w")
+    for i in range(1,101):
 
-    # create empty board for guesses to be placed
-
-    infile = open('enemyBoard.txt', 'w')
-
-    for i in range(10):
-        if i != 9:
-            infile.write("__________\n")
+        if i != 0 and i % 10 == 0:
+            file.write((board[i-1]))
+            file.write("\n")
         else:
-            infile.write("__________")
-    infile.close()
-
-    print('starting server...')
-
-    # gets port from arguments
-    port_number = int(sys.argv[1])
-
-    # gets own IP number, can change to desired IP
-    IP = socket.gethostbyname(socket.gethostname())
-    print("Server IP: " + IP)
-    server_address = (IP, port_number)
-
-    # establish httpd server
-    httpd = HTTPServer(server_address, HTTPHandler)
-    print('http server is running...')
-    httpd.serve_forever()
+            file.write((board[i-1]))
+    file.close()
+    return
 
 
-def makeGuess(ownBoard, guessBoard, row, col):
+def makeGuess(ownBoard, row, col):
 
     # represent the whole board as one list of integers
     guess = row * 10 + col
 
-    # check if the guess missed or you chose a spot you already hit
+    # check if it is out of bounds
     if row > 9 or col > 9:
-        return 404, 0, guessBoard
+        return 404, 0
 
-    elif guessBoard[guess] == 'X' or guessBoard[guess] == 'O':
-        print("You already guessed that spot")
-        return 410, 0, guessBoard
+    # check if the guess was a spot already hit
+    elif ownBoard[guess] == 'X' or ownBoard[guess] == 'O':
+        print("Already guessed that spot")
+        return 410, 0
 
+    # check if the guess missed
     elif ownBoard[guess] == '_':
         print("That one missed")
 
-        # switch out the that spot for a 'missed hit' marker
-        guessBoard = guessBoard[:guess] + 'X' + guessBoard[guess + 1:]
+        # switch out that spot for a 'missed hit' marker
         ownBoard = ownBoard[:guess] + 'X' + ownBoard[guess + 1:]
 
+        overwriteFile(ownBoard)
         writeMyBoard(ownBoard)
-        writeOpponentBoard(guessBoard)
 
-        return 0, 0, guessBoard
+        return 0, 0
     else:  # that probably was a hit
         print("You hit a: " + ownBoard[guess])
         letter = ownBoard[guess]
@@ -170,38 +202,24 @@ def makeGuess(ownBoard, guessBoard, row, col):
         # C, B, R, S, D
         global shipList
 
+        # switch out the that spot for a 'hit a ship' marker
+        ownBoard = ownBoard[:guess] + 'O' + ownBoard[guess + 1:]
+
+        overwriteFile(ownBoard)
+        writeMyBoard(ownBoard)
+
+        # return if it sunk or not
         index = getIndex(letter)
         shipList[index] = shipList[index] - 1
         if shipList[index] <= 0:
-            return 1, letter, guessBoard
-        # switch out the that spot for a 'hit a ship' marker
-        guessBoard = guessBoard[:guess] + 'O' + guessBoard[guess + 1:]
-        ownBoard = ownBoard[:guess] + 'O' + ownBoard[guess + 1:]
+            return 1, letter
 
-        writeMyBoard(ownBoard)
-        writeOpponentBoard(guessBoard)
-
-        return 1, 0, guessBoard
-
-def writeOpponentBoard(Board):
-    file = open("opponent_board.html", "w")
-    x = 0
-    boardStr = ""
-
-    # for every character in the board
-    for char in Board:
-        file.write(char + "&nbsp;")
-        x += 1
-        if (x % 10 == 0):  # if we hit the end of a row, do a endline
-            file.write("<br />")
-
-    file.write("""<html><head></head><body><p>""" + boardStr + """</p></body></html>""")
-    file.close()
-    return
+        return 1, 0
 
 
-# write the
+# function to write the enemy board to html
 def writeMyBoard(Board):
+
     file = open("own_board.html", "w")
     x = 0
     boardStr = ""
@@ -217,6 +235,7 @@ def writeMyBoard(Board):
     file.close()
     return
 
+
 # convert from letter to number
 def getIndex(letter):
     return {
@@ -226,6 +245,7 @@ def getIndex(letter):
         'S': 3,
         'D': 4
     }[letter]
+
 
 # convert from number to letter
 def getLetter(index):
